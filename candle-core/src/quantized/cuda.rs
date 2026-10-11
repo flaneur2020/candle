@@ -691,6 +691,24 @@ impl QCudaStorage {
             GgmlDType::Q5K => deq::<crate::quantized::BlockQ5K>(&buffer, block_len, &mut out),
             GgmlDType::Q6K => deq::<crate::quantized::BlockQ6K>(&buffer, block_len, &mut out),
             GgmlDType::Q8K => deq::<crate::quantized::BlockQ8K>(&buffer, block_len, &mut out),
+            GgmlDType::IQ4XS => {
+                crate::bail!("IQ4_XS dequantize on CUDA is implemented by mistralrs-quant")
+            }
+            GgmlDType::IQ4NL => {
+                crate::bail!("IQ4_NL dequantize on CUDA is implemented by mistralrs-quant")
+            }
+            GgmlDType::Q2_0 => {
+                crate::bail!("Q2_0 dequantize on CUDA is implemented by mistralrs-quant")
+            }
+            GgmlDType::IQ3_XXS => {
+                crate::bail!("IQ3_XXS dequantize on CUDA is implemented by mistralrs-quant")
+            }
+            GgmlDType::IQ2_S => {
+                crate::bail!("IQ2_S dequantize on CUDA is implemented by mistralrs-quant")
+            }
+            GgmlDType::IQ3_S => {
+                crate::bail!("IQ3_S dequantize on CUDA is implemented by mistralrs-quant")
+            }
         }
 
         self.device

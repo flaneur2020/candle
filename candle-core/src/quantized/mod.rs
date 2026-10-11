@@ -115,6 +115,24 @@ impl QStorage {
                 GgmlDType::Q6K => metal::load_quantized(d, as_t_slice::<BlockQ6K>(data)),
                 GgmlDType::Q8K => metal::load_quantized(d, as_t_slice::<BlockQ8K>(data)),
                 GgmlDType::BF16 => metal::load_quantized(d, as_t_slice::<bf16>(data)),
+                GgmlDType::IQ4XS => {
+                    crate::bail!("IQ4_XS is not supported on Metal")
+                }
+                GgmlDType::IQ4NL => {
+                    crate::bail!("IQ4_NL is not supported on Metal")
+                }
+                GgmlDType::Q2_0 => {
+                    crate::bail!("Q2_0 is not supported on Metal")
+                }
+                GgmlDType::IQ3_XXS => {
+                    crate::bail!("IQ3_XXS is not supported on Metal")
+                }
+                GgmlDType::IQ2_S => {
+                    crate::bail!("IQ2_S is not supported on Metal")
+                }
+                GgmlDType::IQ3_S => {
+                    crate::bail!("IQ3_S is not supported on Metal")
+                }
             },
             Device::Cuda(d) => match dtype {
                 GgmlDType::F32 => cuda::load_quantized(d, as_t_slice::<f32>(data)),
@@ -132,6 +150,24 @@ impl QStorage {
                 GgmlDType::Q6K => cuda::load_quantized(d, as_t_slice::<BlockQ6K>(data)),
                 GgmlDType::Q8K => cuda::load_quantized(d, as_t_slice::<BlockQ8K>(data)),
                 GgmlDType::BF16 => cuda::load_quantized(d, as_t_slice::<bf16>(data)),
+                GgmlDType::IQ4XS => {
+                    crate::bail!("IQ4_XS is not supported on CUDA yet")
+                }
+                GgmlDType::IQ4NL => {
+                    crate::bail!("IQ4_NL is not supported on CUDA yet")
+                }
+                GgmlDType::Q2_0 => {
+                    crate::bail!("Q2_0 is not supported on CUDA yet")
+                }
+                GgmlDType::IQ3_XXS => {
+                    crate::bail!("IQ3_XXS is not supported on CUDA yet")
+                }
+                GgmlDType::IQ2_S => {
+                    crate::bail!("IQ2_S is not supported on CUDA yet")
+                }
+                GgmlDType::IQ3_S => {
+                    crate::bail!("IQ3_S is not supported on CUDA yet")
+                }
             },
         }
     }
@@ -298,6 +334,12 @@ pub enum GgmlDType {
     Q5K,
     Q6K,
     Q8K,
+    IQ4XS,
+    IQ4NL,
+    Q2_0,
+    IQ3_XXS,
+    IQ2_S,
+    IQ3_S,
 }
 
 impl GgmlDType {
@@ -317,6 +359,12 @@ impl GgmlDType {
             13 => Self::Q5K,
             14 => Self::Q6K,
             15 => Self::Q8K,
+            23 => Self::IQ4XS,
+            20 => Self::IQ4NL,
+            42 => Self::Q2_0,
+            18 => Self::IQ3_XXS,
+            21 => Self::IQ3_S,
+            22 => Self::IQ2_S,
             // https://github.com/ggerganov/ggml/blob/29d87fc6676e7ed0cdfdec0804b06001d9c2bb44/include/ggml.h#L389
             30 => Self::BF16,
             _ => crate::bail!("unknown dtype for tensor {u}"),
@@ -340,6 +388,12 @@ impl GgmlDType {
             Self::Q5K => 13,
             Self::Q6K => 14,
             Self::Q8K => 15,
+            Self::IQ4XS => 23,
+            Self::IQ4NL => 20,
+            Self::Q2_0 => 42,
+            Self::IQ3_XXS => 18,
+            Self::IQ3_S => 21,
+            Self::IQ2_S => 22,
             // https://github.com/ggerganov/ggml/blob/29d87fc6676e7ed0cdfdec0804b06001d9c2bb44/include/ggml.h#L389
             Self::BF16 => 30,
         }
@@ -362,6 +416,14 @@ impl GgmlDType {
             Self::Q5K => Box::new(vec![BlockQ5K::zeros(); elem_count / BlockQ5K::BLCK_SIZE]),
             Self::Q6K => Box::new(vec![BlockQ6K::zeros(); elem_count / BlockQ6K::BLCK_SIZE]),
             Self::Q8K => Box::new(vec![BlockQ8K::zeros(); elem_count / BlockQ8K::BLCK_SIZE]),
+            // Constructed by mistralrs-quant (it owns the block type); candle never
+            // allocates an IQ4_XS storage of its own.
+            Self::IQ4XS => unreachable!("IQ4_XS storage is built by mistralrs-quant"),
+            Self::IQ4NL => unreachable!("IQ4_NL storage is built by mistralrs-quant"),
+            Self::Q2_0 => unreachable!("Q2_0 storage is built by mistralrs-quant"),
+            Self::IQ3_XXS => unreachable!("IQ3_XXS storage is built by mistralrs-quant"),
+            Self::IQ2_S => unreachable!("IQ2_S storage is built by mistralrs-quant"),
+            Self::IQ3_S => unreachable!("IQ3_S storage is built by mistralrs-quant"),
             Self::BF16 => Box::new(vec![bf16::zeros(); elem_count]),
         }
     }
@@ -383,6 +445,13 @@ impl GgmlDType {
             Self::Q5K => Box::new(as_t_slice::<BlockQ5K>(data).to_vec()),
             Self::Q6K => Box::new(as_t_slice::<BlockQ6K>(data).to_vec()),
             Self::Q8K => Box::new(as_t_slice::<BlockQ8K>(data).to_vec()),
+            // See `cpu_zeros`: mistralrs-quant builds the storage for this type.
+            Self::IQ4XS => unreachable!("IQ4_XS storage is built by mistralrs-quant"),
+            Self::IQ4NL => unreachable!("IQ4_NL storage is built by mistralrs-quant"),
+            Self::Q2_0 => unreachable!("Q2_0 storage is built by mistralrs-quant"),
+            Self::IQ3_XXS => unreachable!("IQ3_XXS storage is built by mistralrs-quant"),
+            Self::IQ2_S => unreachable!("IQ2_S storage is built by mistralrs-quant"),
+            Self::IQ3_S => unreachable!("IQ3_S storage is built by mistralrs-quant"),
             Self::BF16 => Box::new(as_t_slice::<bf16>(data).to_vec()),
         }
     }
@@ -406,6 +475,12 @@ impl GgmlDType {
             Self::Q5K => std::mem::size_of::<BlockQ5K>(),
             Self::Q6K => std::mem::size_of::<BlockQ6K>(),
             Self::Q8K => std::mem::size_of::<BlockQ8K>(),
+            Self::IQ4XS => 136, // block_iq4_xs: 2 + 2 + 4 + 128
+            Self::IQ4NL => 18,  // block_iq4_nl: 2 + 16
+            Self::Q2_0 => 18,   // block_q2_0: 2 + 16
+            Self::IQ3_XXS => 98, // block_iq3_xxs: 2 + 96
+            Self::IQ2_S => 82,   // block_iq2_s: 2 + 64 + 8 + 8
+            Self::IQ3_S => 110,  // block_iq3_s: 2 + 64 + 8 + 32 + 4
         }
     }
 
@@ -420,7 +495,14 @@ impl GgmlDType {
             Self::Q5_1 => k_quants::QK5_1,
             Self::Q8_0 => k_quants::QK8_0,
             Self::Q8_1 => k_quants::QK8_1,
-            Self::Q2K | Self::Q3K | Self::Q4K | Self::Q5K | Self::Q6K | Self::Q8K => k_quants::QK_K,
+            Self::Q2K | Self::Q3K | Self::Q4K | Self::Q5K | Self::Q6K | Self::Q8K | Self::IQ4XS => {
+                k_quants::QK_K
+            }
+            Self::IQ4NL => k_quants::QK4_0,
+            Self::Q2_0 => 64,
+            Self::IQ3_XXS => k_quants::QK_K,
+            Self::IQ2_S => k_quants::QK_K,
+            Self::IQ3_S => k_quants::QK_K,
         }
     }
 }
