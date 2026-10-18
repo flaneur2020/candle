@@ -2813,3 +2813,70 @@ verify_block_sizes!(
     BlockQ4_0, BlockQ4_1, BlockQ5_0, BlockQ5_1, BlockQ8_0, BlockQ8_1, BlockQ2K, BlockQ3K, BlockQ4K,
     BlockQ5K, BlockQ6K, BlockQ8K, f32, f16, bf16
 );
+
+#[cfg(test)]
+mod q4k_micro {
+    //! How fast is one Q4_K x Q8_K dot, really? Single-threaded, on the shape a
+    //! real expert has (512 output rows x 2048 inputs), next to a pure read of
+    //! the same bytes - so the engine's 2.5 GB/s/core can be attributed.
+    //!
+    //! cargo test -p candle-core --release q4k_micro -- --nocapture
+    use super::{GgmlType, QK_K};
+    use crate::quantized::k_quants::{BlockQ4K, BlockQ8K};
+
+    fn time<F: FnOnce()>(f: F) -> f64 {
+        let t = std::time::Instant::now();
+        f();
+        t.elapsed().as_secs_f64()
+    }
+
+    #[test]
+    fn q4k_micro() {
+        let k = 2048usize;
+        let n = 512usize; // output rows of one projection
+        let reps = 20usize;
+
+        // One synthetic expert: a row-major [n, k] Q4_K stack.
+        let src: Vec<f32> = (0..n * k).map(|i| ((i % 97) as f32 - 48.0) / 48.0).collect();
+        let mut xs = vec![BlockQ4K::zeros(); n * k / QK_K];
+        for r in 0..n {
+            BlockQ4K::from_float(&src[r * k..(r + 1) * k], &mut xs[r * k / QK_K..(r + 1) * k / QK_K]);
+        }
+        let act: Vec<f32> = (0..k).map(|i| ((i % 31) as f32 - 15.0) / 15.0).collect();
+        let mut ys = vec![BlockQ8K::zeros(); k / QK_K];
+        BlockQ8K::from_float(&act, &mut ys);
+
+        let bytes = std::mem::size_of::<BlockQ4K>() * xs.len();
+
+        // Pure read of the same bytes: one f32 XOR per 16 bytes.
+        let raw: &[u8] = unsafe { std::slice::from_raw_parts(xs.as_ptr() as *const u8, bytes) };
+        let t_read = time(|| {
+            let mut s = 0u64;
+            for _ in 0..reps {
+                let mut i = 0;
+                while i < raw.len() {
+                    s ^= unsafe { std::ptr::read_volatile(raw.as_ptr().add(i)) } as u64;
+                    i += 64;
+                }
+            }
+            std::hint::black_box(s);
+        });
+
+        // The dot, one call per output row - exactly how the fused CPU MoE drives it.
+        let t_dot = time(|| {
+            let mut acc = 0f32;
+            for _ in 0..reps {
+                for r in 0..n {
+                    acc += BlockQ4K::vec_dot(k, &xs[r * k / QK_K..(r + 1) * k / QK_K], &ys);
+                }
+            }
+            std::hint::black_box(acc);
+        });
+
+        let gbs = |t: f64| bytes as f64 * reps as f64 / t / 1e9;
+        println!("Q4_K micro: {n} rows x {k}, {} KiB of weights, {reps} reps", bytes / 1024);
+        println!("  pure read : {:.2} GB/s  ({:.1} ms)", gbs(t_read), t_read * 1e3);
+        println!("  dot       : {:.2} GB/s  ({:.1} ms)  -> {:.1} us per projection, {:.1} us per expert (3)",
+            gbs(t_dot), t_dot * 1e3, t_dot / reps as f64 * 1e6, t_dot / reps as f64 * 3e6);
+    }
+}
