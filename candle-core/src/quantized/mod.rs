@@ -98,7 +98,10 @@ impl QStorage {
     pub fn from_data(data: Cow<'_, [u8]>, device: &Device, dtype: GgmlDType) -> Result<Self> {
         let data: &[u8] = &data;
         match device {
-            Device::Cpu => Ok(Self::Cpu(dtype.from_data(Cow::Borrowed(data)))),
+            Device::Cpu => {
+                dtype.check_supported_by_candle()?;
+                Ok(Self::Cpu(dtype.from_data(Cow::Borrowed(data))))
+            }
             Device::Metal(d) => match dtype {
                 GgmlDType::F32 => metal::load_quantized(d, as_t_slice::<f32>(data)),
                 GgmlDType::F16 => metal::load_quantized(d, as_t_slice::<f16>(data)),
@@ -115,6 +118,15 @@ impl QStorage {
                 GgmlDType::Q6K => metal::load_quantized(d, as_t_slice::<BlockQ6K>(data)),
                 GgmlDType::Q8K => metal::load_quantized(d, as_t_slice::<BlockQ8K>(data)),
                 GgmlDType::BF16 => metal::load_quantized(d, as_t_slice::<bf16>(data)),
+                GgmlDType::IQ3_XXS
+                | GgmlDType::IQ4_NL
+                | GgmlDType::IQ3_S
+                | GgmlDType::IQ2_S
+                | GgmlDType::IQ4_XS
+                | GgmlDType::Q2_0 => crate::bail!(
+                    "{dtype:?} is not implemented by candle-core: it has no block type for it, so the storage must be \
+                     built by the backend that does"
+                ),
             },
             Device::Cuda(d) => match dtype {
                 GgmlDType::F32 => cuda::load_quantized(d, as_t_slice::<f32>(data)),
@@ -132,6 +144,15 @@ impl QStorage {
                 GgmlDType::Q6K => cuda::load_quantized(d, as_t_slice::<BlockQ6K>(data)),
                 GgmlDType::Q8K => cuda::load_quantized(d, as_t_slice::<BlockQ8K>(data)),
                 GgmlDType::BF16 => cuda::load_quantized(d, as_t_slice::<bf16>(data)),
+                GgmlDType::IQ3_XXS
+                | GgmlDType::IQ4_NL
+                | GgmlDType::IQ3_S
+                | GgmlDType::IQ2_S
+                | GgmlDType::IQ4_XS
+                | GgmlDType::Q2_0 => crate::bail!(
+                    "{dtype:?} is not implemented by candle-core: it has no block type for it, so the storage must be \
+                     built by the backend that does"
+                ),
             },
         }
     }
@@ -298,6 +319,18 @@ pub enum GgmlDType {
     Q5K,
     Q6K,
     Q8K,
+    // The types below are recognised but **not implemented** by candle-core: it has no block
+    // type for them, so it can parse a GGUF header that uses them and reject the tensor with a
+    // clear message instead of failing on an unknown numeric id. Their kernels (block layout,
+    // `vec_dot`, dequantize) are a separate change; until then the storage has to be built by
+    // whoever implements them.
+    // Ids and layouts: https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h
+    IQ3_XXS,
+    IQ4_NL,
+    IQ3_S,
+    IQ2_S,
+    IQ4_XS,
+    Q2_0,
 }
 
 impl GgmlDType {
@@ -317,6 +350,12 @@ impl GgmlDType {
             13 => Self::Q5K,
             14 => Self::Q6K,
             15 => Self::Q8K,
+            18 => Self::IQ3_XXS,
+            20 => Self::IQ4_NL,
+            21 => Self::IQ3_S,
+            22 => Self::IQ2_S,
+            23 => Self::IQ4_XS,
+            42 => Self::Q2_0,
             // https://github.com/ggerganov/ggml/blob/29d87fc6676e7ed0cdfdec0804b06001d9c2bb44/include/ggml.h#L389
             30 => Self::BF16,
             _ => crate::bail!("unknown dtype for tensor {u}"),
@@ -340,8 +379,34 @@ impl GgmlDType {
             Self::Q5K => 13,
             Self::Q6K => 14,
             Self::Q8K => 15,
+            Self::IQ3_XXS => 18,
+            Self::IQ4_NL => 20,
+            Self::IQ3_S => 21,
+            Self::IQ2_S => 22,
+            Self::IQ4_XS => 23,
+            Self::Q2_0 => 42,
             // https://github.com/ggerganov/ggml/blob/29d87fc6676e7ed0cdfdec0804b06001d9c2bb44/include/ggml.h#L389
             Self::BF16 => 30,
+        }
+    }
+
+    /// Whether candle-core can build a storage of this type itself.
+    ///
+    /// The recognised-but-unimplemented ggml types ([`Self::IQ3_XXS`] and friends) can appear in a
+    /// GGUF header, so `from_u32` accepts them; nothing in candle-core can hold their blocks. Every
+    /// entry point that would build one calls this first and returns an error rather than panicking.
+    pub(crate) fn check_supported_by_candle(&self) -> Result<()> {
+        match self {
+            Self::IQ3_XXS
+            | Self::IQ4_NL
+            | Self::IQ3_S
+            | Self::IQ2_S
+            | Self::IQ4_XS
+            | Self::Q2_0 => crate::bail!(
+                "{self:?} is recognised but not implemented by candle-core: it has no block type \
+                 for it, so the storage must be built by the backend that does"
+            ),
+            _ => Ok(()),
         }
     }
 
@@ -363,6 +428,15 @@ impl GgmlDType {
             Self::Q6K => Box::new(vec![BlockQ6K::zeros(); elem_count / BlockQ6K::BLCK_SIZE]),
             Self::Q8K => Box::new(vec![BlockQ8K::zeros(); elem_count / BlockQ8K::BLCK_SIZE]),
             Self::BF16 => Box::new(vec![bf16::zeros(); elem_count]),
+            Self::IQ3_XXS
+            | Self::IQ4_NL
+            | Self::IQ3_S
+            | Self::IQ2_S
+            | Self::IQ4_XS
+            | Self::Q2_0 => unreachable!(
+                "{:?} has no block type in candle-core and `check_supported_by_candle` rejects it",
+                self
+            ),
         }
     }
 
@@ -384,6 +458,15 @@ impl GgmlDType {
             Self::Q6K => Box::new(as_t_slice::<BlockQ6K>(data).to_vec()),
             Self::Q8K => Box::new(as_t_slice::<BlockQ8K>(data).to_vec()),
             Self::BF16 => Box::new(as_t_slice::<bf16>(data).to_vec()),
+            Self::IQ3_XXS
+            | Self::IQ4_NL
+            | Self::IQ3_S
+            | Self::IQ2_S
+            | Self::IQ4_XS
+            | Self::Q2_0 => unreachable!(
+                "{:?} has no block type in candle-core and `check_supported_by_candle` rejects it",
+                self
+            ),
         }
     }
 
@@ -406,6 +489,14 @@ impl GgmlDType {
             Self::Q5K => std::mem::size_of::<BlockQ5K>(),
             Self::Q6K => std::mem::size_of::<BlockQ6K>(),
             Self::Q8K => std::mem::size_of::<BlockQ8K>(),
+            // No block type in candle-core, so the sizes come from ggml itself:
+            // https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h
+            Self::IQ3_XXS => 98,  // block_iq3_xxs: 2 + 96
+            Self::IQ4_NL => 18,   // block_iq4_nl: 2 + 16
+            Self::IQ3_S => 110,   // block_iq3_s: 2 + 64 + 8 + 32 + 4
+            Self::IQ2_S => 82,    // block_iq2_s: 2 + 64 + 8 + 8
+            Self::IQ4_XS => 136,  // block_iq4_xs: 2 + 2 + 4 + 128
+            Self::Q2_0 => 18,    // block_q2_0: 2 + 16
         }
     }
 
@@ -421,6 +512,9 @@ impl GgmlDType {
             Self::Q8_0 => k_quants::QK8_0,
             Self::Q8_1 => k_quants::QK8_1,
             Self::Q2K | Self::Q3K | Self::Q4K | Self::Q5K | Self::Q6K | Self::Q8K => k_quants::QK_K,
+            Self::IQ3_XXS | Self::IQ3_S | Self::IQ2_S | Self::IQ4_XS => k_quants::QK_K,
+            Self::IQ4_NL => k_quants::QK4_0,
+            Self::Q2_0 => 64,
         }
     }
 }
@@ -1305,6 +1399,99 @@ impl crate::Module for QMatMul {
                 };
                 xs.to_dtype(DType::F16)?.matmul(&w)?.to_dtype(in_dtype)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The recognised-but-unimplemented types. Ids, block sizes and block byte sizes are ggml's, so a
+    // GGUF header that uses them is read correctly; only building a storage for one is refused.
+    // https://github.com/ggml-org/ggml/blob/master/src/ggml-common.h
+    const UNIMPLEMENTED: [(u32, GgmlDType, usize, usize); 6] = [
+        (18, GgmlDType::IQ3_XXS, 98, 256),
+        (20, GgmlDType::IQ4_NL, 18, 32),
+        (21, GgmlDType::IQ3_S, 110, 256),
+        (22, GgmlDType::IQ2_S, 82, 256),
+        (23, GgmlDType::IQ4_XS, 136, 256),
+        (42, GgmlDType::Q2_0, 18, 64),
+    ];
+
+    #[test]
+    fn ggml_ids_round_trip() {
+        for (id, dtype, _, _) in UNIMPLEMENTED {
+            assert_eq!(GgmlDType::from_u32(id).unwrap(), dtype);
+            assert_eq!(dtype.to_u32(), id);
+        }
+    }
+
+    #[test]
+    fn unimplemented_types_keep_ggml_layout() {
+        for (id, dtype, type_size, block_size) in UNIMPLEMENTED {
+            assert_eq!(dtype.type_size(), type_size, "type_size of id {id}");
+            assert_eq!(dtype.block_size(), block_size, "block_size of id {id}");
+        }
+    }
+
+    /// The whole point of the ids: a GGUF header that names one of these types is read, the tensor
+    /// is listed with its shape and dtype, and only *materialising* it fails - by name, not as an
+    /// unknown numeric id.
+    #[test]
+    fn a_gguf_header_naming_an_unimplemented_type_parses() {
+        use std::io::Cursor;
+
+        // GGUF v2, no metadata, one IQ4_XS tensor [256]: one block of 136 bytes.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x4655_4747u32.to_le_bytes()); // "GGUF"
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&1u64.to_le_bytes()); // tensor count
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // metadata count
+        bytes.extend_from_slice(&1u64.to_le_bytes()); // name length
+        bytes.extend_from_slice(b"w");
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // n_dims
+        bytes.extend_from_slice(&256u64.to_le_bytes()); // dim
+        bytes.extend_from_slice(&23u32.to_le_bytes()); // ggml type IQ4_XS
+        bytes.extend_from_slice(&0u64.to_le_bytes()); // offset inside the data section
+        let align = gguf_file::DEFAULT_ALIGNMENT as usize;
+        while bytes.len() % align != 0 {
+            bytes.push(0);
+        }
+        bytes.extend(std::iter::repeat_n(0u8, 136));
+
+        let content = gguf_file::Content::read(&mut Cursor::new(&bytes)).unwrap();
+        let info = content.tensor_infos.get("w").expect("the tensor is listed");
+        assert_eq!(info.ggml_dtype, GgmlDType::IQ4_XS);
+        assert_eq!(info.shape.dims(), &[256]);
+
+        let err = match content.tensor(&mut Cursor::new(&bytes), "w", &Device::Cpu) {
+            Ok(_) => panic!("materialising an IQ4_XS tensor must fail"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("IQ4_XS"), "the error should name the type: {err}");
+        assert!(
+            err.contains("not implemented by candle-core"),
+            "the error should say what is missing: {err}"
+        );
+    }
+
+    #[test]
+    fn unimplemented_types_are_refused_by_name() {
+        for (id, dtype, _, _) in UNIMPLEMENTED {
+            let err = dtype.check_supported_by_candle().unwrap_err().to_string();
+            assert!(
+                err.contains("not implemented by candle-core"),
+                "id {id} should be refused, got: {err}"
+            );
+            let err = match QStorage::from_data(Cow::Borrowed(&[0u8; 64]), &Device::Cpu, dtype) {
+                Ok(_) => panic!("from_data with id {id} should be refused"),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                err.contains("not implemented by candle-core"),
+                "from_data with id {id} should be refused, got: {err}"
+            );
         }
     }
 }

@@ -691,6 +691,15 @@ impl QCudaStorage {
             GgmlDType::Q5K => deq::<crate::quantized::BlockQ5K>(&buffer, block_len, &mut out),
             GgmlDType::Q6K => deq::<crate::quantized::BlockQ6K>(&buffer, block_len, &mut out),
             GgmlDType::Q8K => deq::<crate::quantized::BlockQ8K>(&buffer, block_len, &mut out),
+            GgmlDType::IQ3_XXS
+            | GgmlDType::IQ4_NL
+            | GgmlDType::IQ3_S
+            | GgmlDType::IQ2_S
+            | GgmlDType::IQ4_XS
+            | GgmlDType::Q2_0 => crate::bail!(
+                "dequantize of {:?} is not implemented by candle-core",
+                self.dtype
+            ),
         }
 
         self.device

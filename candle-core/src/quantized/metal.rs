@@ -497,6 +497,14 @@ impl From<GgmlDType> for candle_metal_kernels::GgmlDType {
             GgmlDType::F16 => candle_metal_kernels::GgmlDType::F16,
             GgmlDType::F32 => candle_metal_kernels::GgmlDType::F32,
             GgmlDType::BF16 => candle_metal_kernels::GgmlDType::BF16,
+            GgmlDType::IQ3_XXS
+            | GgmlDType::IQ4_NL
+            | GgmlDType::IQ3_S
+            | GgmlDType::IQ2_S
+            | GgmlDType::IQ4_XS
+            | GgmlDType::Q2_0 => unreachable!(
+                "{value:?} has no metal kernel and `check_supported_by_candle` rejects it"
+            ),
         }
     }
 }
